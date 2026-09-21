@@ -1,0 +1,35 @@
+{
+  "_disclaimer": "DEMO / SIMULATION VALUES FOR HACKATHON. These values do not represent real-world cloud model measurements.",
+  "models": {
+    "EfficientModel": {
+      "id": "EfficientModel",
+      "name": "CarbonPilot Efficient Model",
+      "quality": 0.88,
+      "base_latency_sec": 0.6,
+      "latency_per_1k_tokens_sec": 0.65,
+      "cost_per_1k_tokens_usd": 0.0008,
+      "carbon_factor": 0.60,
+      "description": "Optimized for minimal energy consumption and fast inference with modest reasoning requirements."
+    },
+    "BalancedModel": {
+      "id": "BalancedModel",
+      "name": "CarbonPilot Balanced Model",
+      "quality": 0.93,
+      "base_latency_sec": 0.9,
+      "latency_per_1k_tokens_sec": 1.10,
+      "cost_per_1k_tokens_usd": 0.0025,
+      "carbon_factor": 1.00,
+      "description": "Standard workhorse model balancing reasoning depth, cost, and carbon footprint."
+    },
+    "AdvancedModel": {
+      "id": "AdvancedModel",
+      "name": "CarbonPilot Advanced Model",
+      "quality": 0.98,
+      "base_latency_sec": 1.5,
+      "latency_per_1k_tokens_sec": 2.00,
+      "cost_per_1k_tokens_usd": 0.0090,
+      "carbon_factor": 1.85,
+      "description": "Heavy multi-modal reasoning engine for mission-critical, complex synthesis tasks."
+    }
+  }
+}

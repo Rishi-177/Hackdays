@@ -1,0 +1,40 @@
+{
+  "_disclaimer": "DEMO / SIMULATION VALUES FOR HACKATHON. These values do not represent real-world cloud region calls or grid measurements.",
+  "regions": {
+    "Region-A": {
+      "id": "Region-A",
+      "name": "US-East (Simulated High-Carbon Grid)",
+      "carbon_intensity_g_per_kwh": 480.0,
+      "carbon_multiplier": 1.45,
+      "network_latency_sec": 0.05,
+      "description": "Lowest network latency, but powered by coal/gas heavy grid.",
+      "green_window": null
+    },
+    "Region-B": {
+      "id": "Region-B",
+      "name": "EU-North (Simulated Hydro/Wind Grid)",
+      "carbon_intensity_g_per_kwh": 140.0,
+      "carbon_multiplier": 0.52,
+      "network_latency_sec": 0.28,
+      "description": "Ultra low carbon intensity with hydro/wind generation; slightly higher inter-continental latency.",
+      "green_window": {
+        "wait_seconds": 300,
+        "cleaner_carbon_multiplier": 0.35,
+        "description": "Renewable surge forecasted starting in 5 minutes (35% further carbon reduction)."
+      }
+    },
+    "Region-C": {
+      "id": "Region-C",
+      "name": "US-West (Simulated Solar-Mix Grid)",
+      "carbon_intensity_g_per_kwh": 270.0,
+      "carbon_multiplier": 0.90,
+      "network_latency_sec": 0.12,
+      "description": "Moderate carbon intensity with balanced network proximity.",
+      "green_window": {
+        "wait_seconds": 600,
+        "cleaner_carbon_multiplier": 0.65,
+        "description": "Solar peak forecasted in 10 minutes."
+      }
+    }
+  }
+}
