@@ -1,47 +1,40 @@
-"""Engine package for CarbonPilot DAG, Optimizer, Carbon, and Scheduler."""
+"""
+CarbonPilot Engine Package
+"""
 
+from backend.engine.dag import WorkflowDAG, validate_dag, get_critical_path_depth
 from backend.engine.carbon import (
     calculate_node_carbon,
-    calculate_node_cost,
     calculate_node_latency,
-    calculate_slack,
+    calculate_node_cost,
     calculate_total_carbon,
     check_carbon_budget,
-    load_model_profiles,
-    load_region_profiles,
+    calculate_slack,
+    estimate_node_metrics,
 )
-from backend.engine.dag import (
-    CycleError,
-    DAGValidationError,
-    WorkflowDAG,
-)
-from backend.engine.optimizer import (
-    compute_workflow_metrics,
-    optimize_workflow,
-)
-from backend.engine.scheduler import (
-    CandidatePlan,
-    NodeAssignment,
-    create_execution_plan,
-    generate_candidate_plans,
-)
+from backend.engine.optimizer import optimize_workflow, compute_workflow_metrics
+from backend.engine.scheduler import create_execution_plan, generate_candidate_plans
+from backend.engine.quality import evaluate_quality, select_escalation_model
+from backend.engine.simulator import execute_plan, MODEL_PROFILES, REGION_PROFILES
 
 __all__ = [
     "WorkflowDAG",
-    "DAGValidationError",
-    "CycleError",
-    "compute_workflow_metrics",
-    "optimize_workflow",
+    "validate_dag",
+    "get_critical_path_depth",
     "calculate_node_carbon",
     "calculate_node_latency",
     "calculate_node_cost",
     "calculate_total_carbon",
     "check_carbon_budget",
     "calculate_slack",
-    "load_model_profiles",
-    "load_region_profiles",
+    "estimate_node_metrics",
+    "optimize_workflow",
+    "compute_workflow_metrics",
     "create_execution_plan",
     "generate_candidate_plans",
-    "CandidatePlan",
-    "NodeAssignment",
+    "evaluate_quality",
+    "select_escalation_model",
+    "execute_plan",
+    "MODEL_PROFILES",
+    "REGION_PROFILES",
 ]

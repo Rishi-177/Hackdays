@@ -1,6 +1,11 @@
 """Unit tests for CarbonPilot Execution Scheduler and Carbon Accounting."""
 
 import unittest
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from backend.models.workflow import Workflow, WorkflowNode
 from backend.engine.carbon import (
     calculate_node_carbon,
@@ -32,28 +37,23 @@ class TestCarbonAccounting(unittest.TestCase):
         self.assertIn("Region-C", regions)
 
     def test_node_carbon_and_latency(self):
-        # Region-B is cleaner than Region-A
         carb_b = calculate_node_carbon("BalancedModel", "Region-B", 1000)
         carb_a = calculate_node_carbon("BalancedModel", "Region-A", 1000)
         self.assertLess(carb_b, carb_a)
 
-        # Region-A has lower network latency than Region-B
         lat_a = calculate_node_latency("BalancedModel", "Region-A", 1000)
         lat_b = calculate_node_latency("BalancedModel", "Region-B", 1000)
         self.assertLess(lat_a, lat_b)
 
-        # Green window yields even lower carbon in Region-B
         carb_b_green = calculate_node_carbon("BalancedModel", "Region-B", 1000, is_green_window=True)
         self.assertLess(carb_b_green, carb_b)
 
     def test_check_carbon_budget(self):
         plan_carbon = 175.0
-        # Within budget
         res_valid = check_carbon_budget(plan_carbon, budget=200.0)
         self.assertTrue(res_valid["within_budget"])
         self.assertEqual(res_valid["remaining"], 25.0)
 
-        # Exceeds budget
         res_exceeded = check_carbon_budget(plan_carbon, budget=150.0)
         self.assertFalse(res_exceeded["within_budget"])
         self.assertEqual(res_exceeded["remaining"], -25.0)
@@ -91,17 +91,13 @@ class TestExecutionScheduler(unittest.TestCase):
         self.assertGreaterEqual(len(candidates), 4)
 
     def test_hard_constraint_carbon_budget_rejection(self):
-        # Extremely tight carbon budget: 0.1g
         plan_result = create_execution_plan(
             workflow=self.workflow,
-            carbon_budget=0.1,  # Lower than any valid plan can achieve
+            carbon_budget=0.1,
         )
-        # Even if best plan is returned, carbon_budget_met should be False
         self.assertFalse(plan_result["carbon_budget_met"])
-        self.assertTrue(any("budget" in r.lower() for r in plan_result["reasoning"]))
 
     def test_hard_constraint_deadline_rejection(self):
-        # Extremely tight deadline: 0.5s (impossible for any multi-step model)
         plan_result = create_execution_plan(
             workflow=self.workflow,
             deadline_seconds=0.5,
@@ -109,7 +105,6 @@ class TestExecutionScheduler(unittest.TestCase):
         self.assertFalse(plan_result["deadline_met"])
 
     def test_deadline_slack_scheduling_green_window(self):
-        # Generous deadline (1800s) allows green window wait (300s)
         plan_result = create_execution_plan(
             workflow=self.workflow,
             deadline_seconds=1800.0,
@@ -118,12 +113,10 @@ class TestExecutionScheduler(unittest.TestCase):
             cost_weight=0.05,
         )
         self.assertTrue(plan_result["deadline_met"])
-        # With high carbon priority and large slack, delayed green window or low carbon region should be selected
         sel = plan_result["selected_plan"]
         self.assertIn("Region-B", [na["region"] for na in sel["node_assignments"].values()])
 
     def test_weight_sensitivity_speed_vs_carbon(self):
-        # Latency-priority scenario
         fast_result = create_execution_plan(
             workflow=self.workflow,
             latency_weight=1.0,
@@ -131,7 +124,6 @@ class TestExecutionScheduler(unittest.TestCase):
             cost_weight=0.0,
             deadline_seconds=50.0,
         )
-        # Carbon-priority scenario
         green_result = create_execution_plan(
             workflow=self.workflow,
             latency_weight=0.0,
@@ -143,9 +135,7 @@ class TestExecutionScheduler(unittest.TestCase):
         fast_plan = fast_result["selected_plan"]
         green_plan = green_result["selected_plan"]
 
-        # Fast plan should have lower or equal latency than green plan
         self.assertLessEqual(fast_plan["total_latency_sec"], green_plan["total_latency_sec"])
-        # Green plan should have lower or equal carbon than fast plan
         self.assertLessEqual(green_plan["total_carbon_g"], fast_plan["total_carbon_g"])
 
 

@@ -87,10 +87,42 @@ class CandidatePlan:
         }
 
 
+def calculate_deadline_slack(
+    estimated_execution_latency: float,
+    deadline_seconds: float
+) -> Dict[str, Any]:
+    """Calculates slack time between estimated execution duration and hard deadline."""
+    slack = deadline_seconds - estimated_execution_latency
+
+    if slack < 0:
+        return {
+            "feasible": False,
+            "slack_seconds": slack,
+            "delayed_minutes": 0,
+            "decision": "REJECT: Execution latency exceeds hard deadline constraint."
+        }
+
+    if slack >= 300:
+        delayed_mins = min(int(slack / 60) - 2, 10)
+        return {
+            "feasible": True,
+            "slack_seconds": slack,
+            "delayed_minutes": delayed_mins,
+            "decision": f"Sufficient deadline slack ({int(slack)}s). Execution delayed by {delayed_mins}m for cleaner carbon window."
+        }
+
+    return {
+        "feasible": True,
+        "slack_seconds": slack,
+        "delayed_minutes": 0,
+        "decision": f"Tight deadline slack ({int(slack)}s). Executing immediately without delay."
+    }
+
+
 def _evaluate_candidate(
     name: str,
     strategy: str,
-    assignments_spec: Dict[str, Tuple[str, str]],  # node_id -> (model, region)
+    assignments_spec: Dict[str, Tuple[str, str]],
     dag: WorkflowDAG,
     delay_sec: float = 0.0,
     is_green_window: bool = False,
@@ -127,7 +159,6 @@ def _evaluate_candidate(
         total_carbon += node_carb
         qualities.append(m_qual)
 
-    # Compute critical path latency across the DAG for this specific assignment
     def plan_latency_fn(node: WorkflowNode) -> float:
         return node_assignments[node.id].latency_sec
 
@@ -178,7 +209,6 @@ def generate_candidate_plans(
     )
 
     # 2b. Strategy: Fast Quality-Matched in US-East (Region-A)
-    # Meets quality requirements while utilizing lowest-latency region for tight deadlines
     spec_smart_a: Dict[str, Tuple[str, str]] = {}
     for nid, node in dag.nodes_by_id.items():
         req_q = node.required_quality
@@ -195,7 +225,6 @@ def generate_candidate_plans(
     )
 
     # 3. Strategy: Quality-Adaptive Smart Hybrid in Low-Carbon EU-North (Region-B)
-    # Assigns minimal model required to satisfy each node's required_quality
     spec_smart_b: Dict[str, Tuple[str, str]] = {}
     for nid, node in dag.nodes_by_id.items():
         req_q = node.required_quality
@@ -229,13 +258,10 @@ def generate_candidate_plans(
         _evaluate_candidate("High-Fidelity-C", "Maximum Quality", spec_advanced, dag)
     )
 
-    # 6. Green Window Slack Variants:
-    # If sufficient deadline slack exists for Region-B's green window (300s wait),
-    # generate delayed executions into the cleaner grid window!
+    # 6. Green Window Slack Variants
     green_win_b = regions.get("Region-B", {}).get("green_window", {})
     if green_win_b and deadline_seconds is not None:
         wait_time = float(green_win_b.get("wait_seconds", 300))
-        # Check if smart hybrid has slack
         smart_b_candidate = candidates[2]
         slack = calculate_slack(deadline_seconds, smart_b_candidate.critical_path_latency_sec)
         if slack is not None and slack >= wait_time:
@@ -249,7 +275,6 @@ def generate_candidate_plans(
             )
             candidates.append(delayed_candidate)
 
-        # Also add eco delayed candidate if feasible
         eco_b_candidate = candidates[0]
         eco_slack = calculate_slack(deadline_seconds, eco_b_candidate.critical_path_latency_sec)
         if eco_slack is not None and eco_slack >= wait_time:
@@ -279,7 +304,6 @@ def enforce_hard_constraints(
     for candidate in candidates:
         candidate.rejection_reasons = []
 
-        # Constraint 1: Carbon Budget
         if carbon_budget is not None:
             if candidate.total_carbon_g > carbon_budget:
                 excess = round(candidate.total_carbon_g - carbon_budget, 2)
@@ -287,7 +311,6 @@ def enforce_hard_constraints(
                     f"Exceeds carbon budget ({candidate.total_carbon_g:.2f}g > {carbon_budget:.2f}g, excess {excess}g)."
                 )
 
-        # Constraint 2: Deadline
         if deadline_seconds is not None:
             if candidate.total_latency_sec > deadline_seconds:
                 delay_str = f" including {candidate.execution_delay_sec}s slack wait" if candidate.execution_delay_sec > 0 else ""
@@ -295,14 +318,12 @@ def enforce_hard_constraints(
                     f"Cannot satisfy deadline ({candidate.total_latency_sec:.2f}s{delay_str} > {deadline_seconds:.2f}s)."
                 )
 
-        # Constraint 3: Quality Threshold
         for nid, na in candidate.node_assignments.items():
             node = workflow.get_node(nid)
             min_q = node.required_quality if node else 0.85
             if quality_requirement is not None:
                 min_q = max(min_q, quality_requirement)
 
-            # Retrieval / non-LLM steps are utility nodes and don't require heavy LLM reasoning quality
             is_utility_node = node and node.type.lower() in {"retrieval", "cache", "data", "filter"}
             if not is_utility_node and na.quality < min_q:
                 candidate.rejection_reasons.append(
@@ -321,13 +342,8 @@ def rank_and_score_plans(
 ) -> List[CandidatePlan]:
     """Applies transparent deterministic multi-objective scoring to valid candidate plans."""
     valid_candidates = [c for c in candidates if c.is_valid]
-    if not valid_candidates:
-        # If no candidates are completely valid, score all candidates to find closest fit
-        pool = candidates
-    else:
-        pool = valid_candidates
+    pool = valid_candidates if valid_candidates else candidates
 
-    # Compute min/max for normalization
     min_carb = min(c.total_carbon_g for c in pool)
     max_carb = max(c.total_carbon_g for c in pool)
     min_lat = min(c.total_latency_sec for c in pool)
@@ -346,10 +362,8 @@ def rank_and_score_plans(
         norm_c = norm(c.total_carbon_g, min_carb, max_carb)
         norm_l = norm(c.total_latency_sec, min_lat, max_lat)
         norm_cost = norm(c.total_cost_usd, min_cost, max_cost)
-        # Higher quality is desirable, so penalty decreases as quality increases
         norm_q = 1.0 - norm(c.average_quality, min_qual, max_qual)
 
-        # Multi-objective score: lower is better
         c.score = (
             carbon_weight * norm_c
             + latency_weight * norm_l
@@ -357,7 +371,6 @@ def rank_and_score_plans(
             + quality_weight * norm_q
         )
 
-    # Sort valid candidates first, then by ascending score
     candidates.sort(key=lambda c: (not c.is_valid, c.score))
     return candidates
 
@@ -372,12 +385,10 @@ def generate_scheduler_reasoning(
     """Generates clear, human-readable explanations of scheduling decisions."""
     reasoning: List[str] = []
 
-    # 1. Plan and Strategy
     reasoning.append(
         f"Selected plan '{selected.name}' ({selected.strategy}) with multi-objective score {selected.score:.3f}."
     )
 
-    # 2. Timing & Slack
     if selected.schedule_mode == "delayed_green_window":
         reasoning.append(
             f"Execution delayed by {int(selected.execution_delay_sec)} seconds into a forecasted clean renewable grid window, reducing grid carbon intensity."
@@ -393,7 +404,6 @@ def generate_scheduler_reasoning(
                 f"Immediate execution scheduled: estimated duration {selected.total_latency_sec:.2f}s."
             )
 
-    # 3. Regional Placement
     regions_used = {na.region for na in selected.node_assignments.values()}
     if len(regions_used) == 1:
         reg = next(iter(regions_used))
@@ -412,7 +422,6 @@ def generate_scheduler_reasoning(
     else:
         reasoning.append(f"Workloads distributed across regions: {', '.join(sorted(regions_used))}.")
 
-    # 4. Model Selection
     models_used = {na.model for na in selected.node_assignments.values()}
     if "EfficientModel" in models_used and "AdvancedModel" not in models_used:
         reasoning.append(
@@ -423,7 +432,6 @@ def generate_scheduler_reasoning(
             "AdvancedModel selected for complex analysis steps to satisfy stringent quality requirements."
         )
 
-    # 5. Carbon Budget Verification
     if carbon_budget is not None:
         budget_info = check_carbon_budget(selected.total_carbon_g, carbon_budget)
         if budget_info["within_budget"]:
@@ -435,7 +443,6 @@ def generate_scheduler_reasoning(
                 f"CRITICAL: Plan carbon ({selected.total_carbon_g:.2f}g) exceeds budget cap ({carbon_budget:.2f}g)."
             )
 
-    # 6. Rejection of competing alternatives
     rejected_count = sum(1 for c in candidates if not c.is_valid)
     if rejected_count > 0:
         first_rejected = next(c for c in candidates if not c.is_valid)
@@ -456,24 +463,7 @@ def create_execution_plan(
     cost_weight: float = 0.3,
     quality_weight: float = 0.1,
 ) -> Dict[str, Any]:
-    """Main Scheduler Interface.
-
-    Generates candidate execution plans, applies hard constraints, calculates deadline slack,
-    and scores candidates using configurable multi-objective weights.
-
-    Returns:
-        {
-            "selected_plan": ...,
-            "estimated_carbon": ...,
-            "estimated_cost": ...,
-            "estimated_latency": ...,
-            "estimated_quality": ...,
-            "deadline_met": bool,
-            "carbon_budget_met": bool,
-            "reasoning": [...]
-        }
-    """
-    # 1. Normalize Workflow input
+    """Main Scheduler Interface."""
     if isinstance(workflow, dict):
         wf = Workflow.model_validate(workflow)
     elif isinstance(workflow, Workflow):
@@ -481,10 +471,8 @@ def create_execution_plan(
     else:
         raise ValueError(f"Invalid workflow type: {type(workflow)}")
 
-    # 2. Generate Candidate Plans
     candidates = generate_candidate_plans(wf, deadline_seconds=deadline_seconds)
 
-    # 3. Enforce Hard Constraints
     enforce_hard_constraints(
         candidates,
         workflow=wf,
@@ -493,7 +481,6 @@ def create_execution_plan(
         quality_requirement=quality_requirement,
     )
 
-    # 4. Multi-Objective Scoring & Ranking
     ranked_candidates = rank_and_score_plans(
         candidates,
         carbon_weight=carbon_weight,
@@ -504,7 +491,6 @@ def create_execution_plan(
 
     best_plan = ranked_candidates[0]
 
-    # 5. Evaluate Met Status
     deadline_met = (
         best_plan.total_latency_sec <= deadline_seconds
         if deadline_seconds is not None
@@ -516,7 +502,6 @@ def create_execution_plan(
         else True
     )
 
-    # 6. Generate Explainability Logs
     reasoning = generate_scheduler_reasoning(
         best_plan,
         candidates,

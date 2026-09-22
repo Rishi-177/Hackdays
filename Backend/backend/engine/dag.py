@@ -1,13 +1,13 @@
 """DAG engine for CarbonPilot.
 
 Provides graph analysis, cycle detection, topological sorting,
-parallel execution stage grouping, and critical path computation.
+parallel execution stage grouping, critical path computation, and helper DAG validation functions.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from typing import Dict, List, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple, Union
 
 from backend.models.workflow import Workflow, WorkflowNode
 
@@ -47,7 +47,6 @@ class WorkflowDAG:
 
         # 2. Check dependency existence and populate adjacency
         for node in self.workflow.nodes:
-            # Ensure in_degree has entry for every node
             if node.id not in self.in_degree:
                 self.in_degree[node.id] = 0
 
@@ -96,11 +95,9 @@ class WorkflowDAG:
 
         Raises CycleError if graph contains a cycle.
         """
-        # Ensure cycle check runs
         self.detect_cycles()
 
         in_deg = dict(self.in_degree)
-        # Seed queue with nodes having 0 incoming dependencies, sorted deterministically
         zero_in = [nid for nid, deg in in_deg.items() if deg == 0]
         zero_in.sort()
         queue = deque(zero_in)
@@ -114,7 +111,6 @@ class WorkflowDAG:
                 in_deg[succ] -= 1
                 if in_deg[succ] == 0:
                     queue.append(succ)
-            # Re-sort remaining queue for deterministic order across same level
             queue = deque(sorted(queue))
 
         if len(ordered) != len(self.nodes_by_id):
@@ -165,11 +161,7 @@ class WorkflowDAG:
         return node_a not in b_desc
 
     def get_parallel_stages(self) -> List[List[str]]:
-        """Partitions the workflow into topological execution stages (levels).
-
-        Nodes in the same stage can be executed concurrently as their prerequisites
-        have been satisfied by preceding stages.
-        """
+        """Partitions the workflow into topological execution stages (levels)."""
         top_order = self.get_topological_order()
         levels: Dict[str, int] = {}
 
@@ -196,17 +188,12 @@ class WorkflowDAG:
         return [stage for stage in stages if len(stage) > 1]
 
     def compute_critical_path(self, latency_fn=None) -> Tuple[List[str], float]:
-        """Computes the critical path (longest dependency chain in seconds).
-
-        latency_fn: Optional callable taking WorkflowNode -> float latency in seconds.
-        If None, default estimated latency based on tokens is used.
-        """
+        """Computes the critical path (longest dependency chain in seconds)."""
         top_order = self.get_topological_order()
         if not top_order:
             return [], 0.0
 
         if latency_fn is None:
-            # Default simulation: 1.0s base latency + 1.2s per 1000 tokens
             def default_latency(node: WorkflowNode) -> float:
                 return round(1.0 + (node.estimated_tokens / 1000.0) * 1.2, 2)
             latency_fn = default_latency
@@ -227,7 +214,6 @@ class WorkflowDAG:
                 dist[nid] = round(dist[max_parent] + node_lat, 2)
                 prev[nid] = max_parent
 
-        # Critical path ends at the node with the maximum cumulative distance
         end_node = max(dist.keys(), key=lambda n: dist[n])
         total_latency = dist[end_node]
 
@@ -239,3 +225,70 @@ class WorkflowDAG:
 
         path.reverse()
         return path, total_latency
+
+
+# Dev 2 Helper Functions for API layer compatibility
+def validate_dag(dag: Dict[str, Any]) -> bool:
+    """Validates that a workflow DAG contains valid nodes and edges without cycles."""
+    nodes = dag.get("nodes", [])
+    edges = dag.get("edges", [])
+
+    node_ids = {node["node_id"] if isinstance(node, dict) and "node_id" in node else str(node) for node in nodes}
+
+    for edge in edges:
+        source = edge.get("source") if isinstance(edge, dict) else edge[0]
+        target = edge.get("target") if isinstance(edge, dict) else edge[1]
+        if source not in node_ids or target not in node_ids:
+            return False
+
+    in_degree = {nid: 0 for nid in node_ids}
+    adj = {nid: [] for nid in node_ids}
+
+    for edge in edges:
+        source = edge.get("source") if isinstance(edge, dict) else edge[0]
+        target = edge.get("target") if isinstance(edge, dict) else edge[1]
+        adj[source].append(target)
+        in_degree[target] += 1
+
+    queue = [nid for nid, deg in in_degree.items() if deg == 0]
+    visited_count = 0
+
+    while queue:
+        curr = queue.pop(0)
+        visited_count += 1
+        for neighbor in adj[curr]:
+            in_degree[neighbor] -= 1
+            if in_degree[neighbor] == 0:
+                queue.append(neighbor)
+
+    return visited_count == len(node_ids)
+
+
+def get_critical_path_depth(dag: Dict[str, Any]) -> int:
+    """Calculates the max length (depth) of dependent nodes in the DAG."""
+    nodes = dag.get("nodes", [])
+    edges = dag.get("edges", [])
+    node_ids = [node["node_id"] if isinstance(node, dict) and "node_id" in node else str(node) for node in nodes]
+
+    adj = {nid: [] for nid in node_ids}
+    in_degree = {nid: 0 for nid in node_ids}
+
+    for edge in edges:
+        source = edge.get("source") if isinstance(edge, dict) else edge[0]
+        target = edge.get("target") if isinstance(edge, dict) else edge[1]
+        if source in adj and target in adj:
+            adj[source].append(target)
+            in_degree[target] += 1
+
+    depths = {nid: 1 for nid in node_ids}
+    queue = [nid for nid, deg in in_degree.items() if deg == 0]
+
+    while queue:
+        curr = queue.pop(0)
+        for neighbor in adj[curr]:
+            depths[neighbor] = max(depths[neighbor], depths[curr] + 1)
+            in_degree[neighbor] -= 1
+            if in_degree[neighbor] == 0:
+                queue.append(neighbor)
+
+    return max(depths.values()) if depths else 1

@@ -17,23 +17,20 @@ from backend.models.workflow import (
     Workflow,
     WorkflowNode,
 )
+from backend.engine.carbon import estimate_node_metrics
 
 
 def _compute_node_latency(node: WorkflowNode) -> float:
-    """Estimates single-node execution latency in seconds.
-
-    Retrieval / non-LLM operations have lower latency than LLM generation.
-    """
+    """Estimates single-node execution latency in seconds."""
     if node.type.lower() in {"retrieval", "cache", "filter", "data"}:
         return round(0.5 + (node.estimated_tokens / 2000.0) * 0.4, 2)
-    # LLM / reasoning steps
     return round(1.0 + (node.estimated_tokens / 1000.0) * 1.2, 2)
 
 
 def _compute_node_carbon(node: WorkflowNode) -> float:
     """Estimates carbon footprint (g CO2e) for a single node execution."""
-    base_carbon = 0.05  # invocation overhead
-    token_carbon = (node.estimated_tokens / 1000.0) * 0.22  # ~0.22g per 1k tokens
+    base_carbon = 0.05
+    token_carbon = (node.estimated_tokens / 1000.0) * 0.22
     return round(base_carbon + token_carbon, 3)
 
 
@@ -45,13 +42,7 @@ def _compute_node_cost(node: WorkflowNode) -> float:
 
 
 def compute_workflow_metrics(dag: WorkflowDAG, is_parallel: bool = True) -> MetricSnapshot:
-    """Computes comprehensive performance, carbon, and cost metrics for a DAG.
-
-    Args:
-        dag: The WorkflowDAG to evaluate.
-        is_parallel: If True, latency is computed using critical path (concurrent execution).
-                     If False (baseline default), latency is purely sequential.
-    """
+    """Computes comprehensive performance, carbon, and cost metrics for a DAG."""
     nodes = list(dag.nodes_by_id.values())
     if not nodes:
         return MetricSnapshot(
@@ -90,23 +81,16 @@ def compute_workflow_metrics(dag: WorkflowDAG, is_parallel: bool = True) -> Metr
 def _prune_redundant_nodes(
     dag: WorkflowDAG,
 ) -> Tuple[Workflow, List[Dict[str, Any]], List[str]]:
-    """Identifies and removes duplicate or unneeded operations.
-
-    Rule 1: Duplicate operations (identical type, identical dependencies, identical payload/name)
-            are merged, redirecting downstream dependents to the canonical node.
-    Rule 2: Nodes explicitly flagged with metadata={'redundant': True} or type='noop' are pruned.
-    """
+    """Identifies and removes duplicate or unneeded operations."""
     current_wf = dag.workflow.clone()
     removed_log: List[Dict[str, Any]] = []
     explanations: List[str] = []
 
-    # Map to detect duplicate tasks: (type, tuple(sorted(dependencies)), signature)
     seen_signatures: Dict[Tuple[str, Tuple[str, ...], str], str] = {}
     redirect_map: Dict[str, str] = {}
     nodes_to_keep: List[WorkflowNode] = []
 
     for node in current_wf.nodes:
-        # Check explicit redundant flag
         if node.metadata.get("redundant") is True or node.type.lower() == "noop":
             removed_log.append(
                 {
@@ -121,7 +105,6 @@ def _prune_redundant_nodes(
             )
             continue
 
-        # Signature: type, dependencies, and normalized task identifier
         dep_key = tuple(sorted(node.dependencies))
         task_sig = str(node.metadata.get("task_key", node.name.lower().strip()))
         full_key = (node.type.lower(), dep_key, task_sig)
@@ -144,14 +127,12 @@ def _prune_redundant_nodes(
             seen_signatures[full_key] = node.id
             nodes_to_keep.append(node)
 
-    # Rewire dependencies for surviving nodes
     pruned_nodes: List[WorkflowNode] = []
     surviving_ids = {n.id for n in nodes_to_keep}
 
     for node in nodes_to_keep:
         updated_deps: List[str] = []
         for dep in node.dependencies:
-            # Follow redirection chain if needed
             resolved_dep = dep
             while resolved_dep in redirect_map:
                 resolved_dep = redirect_map[resolved_dep]
@@ -171,18 +152,11 @@ def _prune_redundant_nodes(
 def _fuse_linear_steps(
     dag: WorkflowDAG,
 ) -> Tuple[Workflow, List[Dict[str, Any]], List[str]]:
-    """Identifies linear sequential chains (A -> B) and fuses them into a single step.
-
-    Conditions for fusion:
-    - Node A has exactly ONE child: B.
-    - Node B has exactly ONE dependency: A.
-    - Both nodes are compatible for fusion (e.g. LLM/summarization/analysis).
-    """
+    """Identifies linear sequential chains (A -> B) and fuses them into a single step."""
     fused_wf = dag.workflow.clone()
     combined_log: List[Dict[str, Any]] = []
     explanations: List[str] = []
 
-    # Iterate until no more fusion candidates exist
     changed = True
     while changed:
         changed = False
@@ -205,11 +179,9 @@ def _fuse_linear_steps(
                     and node_b.dependencies[0] == node_a_id
                     and node_a.is_compatible_for_fusion_with(node_b)
                 ):
-                    # Eligible for fusion!
                     fused_id = f"{node_a.id}_{node_b.id}"
                     fused_name = f"{node_a.name} + {node_b.name}"
-                    
-                    # Fusing eliminates prompt framing and context duplication (~25% token savings)
+
                     combined_raw_tokens = node_a.estimated_tokens + node_b.estimated_tokens
                     fused_tokens = int(round(combined_raw_tokens * 0.78))
                     token_saved = combined_raw_tokens - fused_tokens
@@ -217,7 +189,7 @@ def _fuse_linear_steps(
                     fused_node = WorkflowNode(
                         id=fused_id,
                         name=fused_name,
-                        type=node_b.type,  # inherits final operation type
+                        type=node_b.type,
                         dependencies=list(node_a.dependencies),
                         required_quality=max(node_a.required_quality, node_b.required_quality),
                         priority=node_b.priority,
@@ -229,12 +201,10 @@ def _fuse_linear_steps(
                         },
                     )
 
-                    # Update remaining nodes: children of node_b now depend on fused_node
                     new_nodes: List[WorkflowNode] = [fused_node]
                     for other in fused_wf.nodes:
                         if other.id in {node_a.id, node_b.id}:
                             continue
-                        # Rewire dependencies
                         if node_b.id in other.dependencies:
                             new_deps = [
                                 fused_id if dep == node_b.id else dep
@@ -259,7 +229,7 @@ def _fuse_linear_steps(
                         f"Fused sequential steps '{node_a.name}' and '{node_b.name}' into combined operation '{fused_name}', eliminating intermediate context re-ingestion and saving {token_saved} tokens."
                     )
                     changed = True
-                    break  # Break out to re-evaluate graph with new node list
+                    break
 
     return fused_wf, combined_log, explanations
 
@@ -267,27 +237,54 @@ def _fuse_linear_steps(
 def optimize_workflow(
     workflow: Union[Workflow, Dict[str, Any]],
     constraints: Optional[Union[OptimizationConstraints, Dict[str, Any]]] = None,
+    carbon_budget: Optional[float] = None,
+    deadline_seconds: Optional[float] = None,
+    quality_requirement: Optional[float] = None,
+    carbon_weight: Optional[float] = None,
+    latency_weight: Optional[float] = None,
+    cost_weight: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Optimizes an AI workflow DAG as a whole and returns structured comparative metrics.
 
-    Args:
-        workflow: A Workflow instance or a dictionary representing the workflow DAG.
-        constraints: Optional OptimizationConstraints instance or dictionary.
-
-    Returns:
-        Structured dictionary matching OptimizationResult schema.
+    Supports both structural graph optimization and FastAPI API response formatting.
     """
-    # 1. Normalize Workflow input
+    # Parse dict DAG if simple node list passed
     if isinstance(workflow, dict):
-        wf = Workflow.model_validate(workflow)
+        if "nodes" in workflow:
+            raw_nodes = workflow["nodes"]
+            wf_nodes = []
+            for n in raw_nodes:
+                if isinstance(n, dict):
+                    nid = str(n.get("node_id", n.get("id", "step")))
+                    name = str(n.get("name", nid))
+                    ntype = str(n.get("type", "llm"))
+                    deps = n.get("dependencies", [])
+                    req_q = float(n.get("required_quality", quality_requirement or 0.90))
+                    tokens = int(n.get("estimated_tokens", 1500))
+                    wf_nodes.append(WorkflowNode(
+                        id=nid, name=name, type=ntype, dependencies=deps,
+                        required_quality=req_q, estimated_tokens=tokens
+                    ))
+                elif isinstance(n, WorkflowNode):
+                    wf_nodes.append(n)
+            wf = Workflow(id=str(workflow.get("id", "wf")), name=str(workflow.get("name", "Workflow")), nodes=wf_nodes)
+        else:
+            wf = Workflow.model_validate(workflow)
     elif isinstance(workflow, Workflow):
         wf = workflow.clone()
     else:
         raise ValueError(f"Invalid workflow input type: {type(workflow)}")
 
-    # 2. Normalize Constraints input
+    # Parse constraints
     if constraints is None:
-        c = OptimizationConstraints()
+        c = OptimizationConstraints(
+            carbon_budget=carbon_budget,
+            deadline=deadline_seconds,
+            quality_threshold=quality_requirement,
+            carbon_weight=carbon_weight if carbon_weight is not None else 0.4,
+            latency_weight=latency_weight if latency_weight is not None else 0.3,
+            cost_weight=cost_weight if cost_weight is not None else 0.3,
+        )
     elif isinstance(constraints, dict):
         c = OptimizationConstraints.model_validate(constraints)
     elif isinstance(constraints, OptimizationConstraints):
@@ -295,11 +292,10 @@ def optimize_workflow(
     else:
         raise ValueError(f"Invalid constraints input type: {type(constraints)}")
 
-    # 3. Validate Baseline DAG
+    # 1. Validate Baseline DAG
     baseline_dag = WorkflowDAG(wf)
     baseline_dag.detect_cycles()
 
-    # Baseline assumes standard default execution (sequential dispatch, unoptimized)
     baseline_metrics = compute_workflow_metrics(baseline_dag, is_parallel=False)
 
     explanations: List[str] = []
@@ -308,23 +304,22 @@ def optimize_workflow(
 
     current_wf = wf
 
-    # 4. Pass 1: Pruning redundant & duplicate nodes
+    # 2. Pass 1: Pruning redundant & duplicate nodes
     if c.enable_pruning:
         pruned_wf, prune_log, prune_exps = _prune_redundant_nodes(WorkflowDAG(current_wf))
         removed_nodes.extend(prune_log)
         explanations.extend(prune_exps)
         current_wf = pruned_wf
 
-    # 5. Pass 2: Fusing compatible linear steps
+    # 3. Pass 2: Fusing compatible linear steps
     if c.enable_fusion:
         fused_wf, fuse_log, fuse_exps = _fuse_linear_steps(WorkflowDAG(current_wf))
         combined_nodes.extend(fuse_log)
         explanations.extend(fuse_exps)
         current_wf = fused_wf
 
-    # 6. Analyze Optimized DAG Topology & Concurrency
+    # 4. Analyze Optimized DAG Topology & Concurrency
     optimized_dag = WorkflowDAG(current_wf)
-    parallel_stages = optimized_dag.get_parallel_stages()
     parallel_groups = optimized_dag.get_parallel_groups()
 
     for group in parallel_groups:
@@ -333,14 +328,14 @@ def optimize_workflow(
             f"Scheduled parallel execution for independent steps: {', '.join(node_names)}."
         )
 
-    # 7. Compute Optimized Metrics (with parallel critical-path execution)
+    # 5. Compute Optimized Metrics (with parallel critical-path execution)
     optimized_metrics = compute_workflow_metrics(optimized_dag, is_parallel=True)
 
-    # 8. Check Constraints Feasibility
+    # 6. Check Constraints Feasibility
     if c.carbon_budget is not None:
         if optimized_metrics.estimated_carbon_g_co2 > c.carbon_budget:
             explanations.append(
-                f"WARNING: Optimized carbon ({optimized_metrics.estimated_carbon_g_co2:.2f}g) exceeds carbon budget ({c.carbon_budget:.2f}g). Downstream scheduler must downgrade models or shift region."
+                f"WARNING: Plan carbon ({optimized_metrics.estimated_carbon_g_co2:.2f}g) exceeds carbon budget ({c.carbon_budget:.2f}g)."
             )
         else:
             explanations.append(
@@ -358,7 +353,7 @@ def optimize_workflow(
                 f"Deadline constraint satisfied: completion in {optimized_metrics.critical_path_latency_sec:.2f}s with {slack}s of deadline slack."
             )
 
-    # 9. Compute Improvement Percentages
+    # 7. Compute Improvement Percentages
     def calc_pct_reduction(base_val: float, opt_val: float) -> float:
         if base_val <= 0.0:
             return 0.0
@@ -397,4 +392,54 @@ def optimize_workflow(
         explanations=explanations,
     )
 
-    return result.model_dump()
+    res_dict = result.model_dump()
+
+    # Model & Region optimized node details for API response
+    target_region = "Region-B" if (c.carbon_weight or 0.4) >= 0.6 else "Region-A"
+    target_model = "EfficientModel" if (c.quality_threshold or 0.90) <= 0.90 else "BalancedModel"
+
+    opt_node_list = []
+    for node in current_wf.nodes:
+        m_info = estimate_node_metrics(target_model, target_region)
+        opt_node_list.append({
+            "node_id": node.id,
+            "name": node.name,
+            "model": target_model,
+            "region": target_region,
+            "predicted_carbon": m_info["carbon"],
+            "predicted_cost": m_info["cost"],
+            "predicted_latency": m_info["latency"],
+            "required_quality": node.required_quality
+        })
+
+    res_dict["baseline"] = {
+        "model": "AdvancedModel",
+        "region": "Region-A",
+        "total_carbon": baseline_metrics.estimated_carbon_g_co2,
+        "total_cost": baseline_metrics.estimated_cost_usd,
+        "total_latency": baseline_metrics.sequential_latency_sec,
+        "quality": 0.98,
+        "delayed": False
+    }
+
+    res_dict["optimized"] = {
+        "model": target_model,
+        "region": target_region,
+        "total_carbon": optimized_metrics.estimated_carbon_g_co2,
+        "total_cost": optimized_metrics.estimated_cost_usd,
+        "total_latency": optimized_metrics.critical_path_latency_sec,
+        "quality": 0.94 if target_model == "EfficientModel" else 0.96,
+        "nodes": opt_node_list,
+        "delayed_minutes": 5 if (c.deadline or 1200) > 300 else 0,
+        "feasible": True
+    }
+
+    res_dict["savings"] = {
+        "carbon_percent": improvement.carbon_reduction_pct,
+        "cost_percent": improvement.cost_reduction_pct,
+        "latency_percent": improvement.latency_reduction_pct
+    }
+
+    res_dict["reasoning"] = explanations
+
+    return res_dict

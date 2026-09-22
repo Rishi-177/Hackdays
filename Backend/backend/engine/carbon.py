@@ -75,6 +75,19 @@ _DEFAULT_REGIONS = {
     },
 }
 
+# Dev 2 direct lookup metrics
+MODEL_CARBON_BASELINE: Dict[str, float] = {
+    "EfficientModel": 10.0,
+    "BalancedModel": 25.0,
+    "AdvancedModel": 60.0
+}
+
+REGION_CARBON_INTENSITY: Dict[str, float] = {
+    "Region-A": 1.45,
+    "Region-B": 0.52,
+    "Region-C": 0.90
+}
+
 
 def load_model_profiles() -> Dict[str, Any]:
     """Loads simulated model profiles from JSON or fallback defaults."""
@@ -100,17 +113,38 @@ def load_region_profiles() -> Dict[str, Any]:
     return _DEFAULT_REGIONS
 
 
+def estimate_node_metrics(model: str, region: str) -> Dict[str, float]:
+    """Estimates carbon, cost, and latency for a node given model and region choices."""
+    models = load_model_profiles()
+    regions = load_region_profiles()
+
+    model_info = models.get(model, models.get("BalancedModel", {}))
+    region_info = regions.get(region, regions.get("Region-C", {}))
+
+    carbon_base = MODEL_CARBON_BASELINE.get(model, 25.0)
+    region_mult = region_info.get("carbon_multiplier", 1.0)
+    estimated_carbon = round(carbon_base * region_mult, 2)
+
+    latency_base = model_info.get("base_latency_sec", 1.0) * 4.0
+    net_lat = region_info.get("network_latency_sec", 0.1)
+    estimated_latency = round(latency_base + net_lat, 2)
+
+    estimated_cost = round(model_info.get("cost_per_1k_tokens_usd", 0.002) * 4.0, 4)
+
+    return {
+        "carbon": estimated_carbon,
+        "latency": estimated_latency,
+        "cost": estimated_cost
+    }
+
+
 def calculate_node_carbon(
     model_id: str,
     region_id: str,
     token_count: int,
     is_green_window: bool = False,
 ) -> float:
-    """Estimates carbon footprint (in grams CO2e) for a node operation.
-
-    Formula:
-      Carbon = Base_Overhead + (Tokens / 1000 * 0.20g) * Model_Carbon_Factor * Region_Multiplier
-    """
+    """Estimates carbon footprint (in grams CO2e) for a node operation."""
     models = load_model_profiles()
     regions = load_region_profiles()
 
@@ -160,11 +194,7 @@ def calculate_node_cost(model_id: str, token_count: int) -> float:
 
 
 def calculate_total_carbon(plan: Union[Dict[str, Any], Any]) -> float:
-    """Calculates the total carbon footprint (in grams CO2e) of an execution plan.
-
-    Accepts either an execution plan dict (with 'node_assignments' or 'estimated_carbon')
-    or a dict of node assignments.
-    """
+    """Calculates the total carbon footprint (in grams CO2e) of an execution plan."""
     if isinstance(plan, dict) and "estimated_carbon" in plan:
         return float(plan["estimated_carbon"])
 
@@ -186,16 +216,7 @@ def check_carbon_budget(
     plan: Union[Dict[str, Any], float],
     budget: Optional[float],
 ) -> Dict[str, Any]:
-    """Evaluates whether an execution plan satisfies the hard carbon budget constraint.
-
-    Returns:
-        {
-            "budget": 200.0,
-            "estimated_carbon": 173.0,
-            "remaining": 27.0,
-            "within_budget": True
-        }
-    """
+    """Evaluates whether an execution plan satisfies the hard carbon budget constraint."""
     if isinstance(plan, (int, float)):
         carbon = float(plan)
     else:
@@ -221,11 +242,7 @@ def check_carbon_budget(
 
 
 def calculate_slack(deadline: Optional[float], estimated_execution_time: float) -> Optional[float]:
-    """Calculates deadline slack in seconds.
-
-    Slack = Deadline - Estimated Execution Time.
-    Returns None if no deadline is specified.
-    """
+    """Calculates deadline slack in seconds."""
     if deadline is None:
         return None
     return round(deadline - estimated_execution_time, 2)

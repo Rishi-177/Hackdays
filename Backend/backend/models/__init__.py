@@ -1,12 +1,26 @@
-"""Workflow models module."""
+"""
+CarbonPilot Models Package
+"""
 
 from backend.models.workflow import (
-    MetricSnapshot,
+    WorkflowNode,
+    Workflow,
     OptimizationConstraints,
+    MetricSnapshot,
     OptimizationImprovement,
     OptimizationResult,
-    Workflow,
-    WorkflowNode,
+)
+from backend.models.api_models import (
+    WorkflowCreate,
+    WorkflowResponse,
+    OptimizeRequest,
+    OptimizeResponse,
+    ExecuteRequest,
+    ExecuteResponse,
+    QualityCheckRequest,
+    QualityCheckResponse,
+    DashboardResponse,
+    SavingsMetrics,
 )
 
 __all__ = [
@@ -16,4 +30,14 @@ __all__ = [
     "MetricSnapshot",
     "OptimizationImprovement",
     "OptimizationResult",
+    "WorkflowCreate",
+    "WorkflowResponse",
+    "OptimizeRequest",
+    "OptimizeResponse",
+    "ExecuteRequest",
+    "ExecuteResponse",
+    "QualityCheckRequest",
+    "QualityCheckResponse",
+    "DashboardResponse",
+    "SavingsMetrics",
 ]
