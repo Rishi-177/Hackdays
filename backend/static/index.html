@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>CarbonPilot Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+<style>
+  body { background:#0f172a; font-family:'Inter',sans-serif; }
+  .card { background:#1e293b; border:1px solid #334155; border-radius:12px; }
+  .kpi-val { font-size:2rem; font-weight:700; }
+  .slider-wrap label { display:flex; justify-content:space-between; font-size:.85rem; color:#94a3b8; }
+  input[type=range] { accent-color:#38bdf8; width:100%; }
+  .log-box { background:#0f172a; border:1px solid #1e3a5f; border-radius:8px; max-height:220px; overflow-y:auto; padding:10px; font-size:.78rem; color:#7dd3fc; font-family:monospace; }
+  .node-chip { background:#1e3a5f; border:1px solid #38bdf8; border-radius:8px; padding:8px 12px; font-size:.8rem; color:#e2e8f0; }
+  .node-chip .badge { font-size:.65rem; border-radius:4px; padding:2px 6px; }
+  .green { background:#166534; color:#86efac; }
+  .yellow { background:#854d0e; color:#fde68a; }
+  .red { background:#7f1d1d; color:#fca5a5; }
+  .btn-primary { background:linear-gradient(135deg,#0ea5e9,#6366f1); color:#fff; border:none; border-radius:8px; padding:10px 22px; font-weight:600; cursor:pointer; transition:opacity .2s; }
+  .btn-primary:hover { opacity:.85; }
+  .btn-secondary { background:#1e293b; border:1px solid #38bdf8; color:#38bdf8; border-radius:8px; padding:10px 22px; font-weight:600; cursor:pointer; transition:background .2s; }
+  .btn-secondary:hover { background:#1e3a5f; }
+  .spinner { display:inline-block; width:16px; height:16px; border:2px solid #fff; border-top-color:transparent; border-radius:50%; animation:spin .7s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  ::-webkit-scrollbar { width:6px; } ::-webkit-scrollbar-track { background:#0f172a; } ::-webkit-scrollbar-thumb { background:#334155; border-radius:3px; }
+</style>
+</head>
+<body class="min-h-screen text-slate-200 p-6">
+
+<!-- Header -->
+<div class="flex items-center justify-between mb-8">
+  <div class="flex items-center gap-3">
+    <span class="text-3xl">&#9889;</span>
+    <div>
+      <h1 class="text-2xl font-bold text-white">CarbonPilot</h1>
+      <p class="text-slate-400 text-sm">AI Workflow Carbon &amp; Cost Optimizer</p>
+    </div>
+  <div class="flex items-center gap-2">
+    <button id="toggle-network-btn" onclick="toggleSimulatedNetwork()" class="bg-slate-800 hover:bg-slate-700 text-xs px-3 py-1.5 rounded-lg border border-slate-600 transition flex items-center gap-1.5 text-slate-300">
+      <i class="fa-solid fa-wifi"></i> <span id="toggle-network-label">Simulate Offline</span>
+    </button>
+    <div id="network-state-badge" class="flex items-center gap-2 bg-emerald-950/80 border border-emerald-700/50 px-3 py-1.5 rounded-full text-xs font-semibold text-emerald-300">
+      <span class="w-2.5 h-2.5 rounded-full bg-green-400 inline-block animate-pulse" id="network-state-dot"></span>
+      <span id="network-state-text">ONLINE</span>
+    </div>
+    <div id="health-badge" class="flex items-center gap-2 bg-slate-800 px-3 py-1.5 rounded-full text-xs">
+      <span class="w-2 h-2 rounded-full bg-gray-500 inline-block" id="health-dot"></span>
+      <span id="health-text">Checking...</span>
+    </div>
+  </div>
+</div>
+
+<!-- KPI Cards -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+  <div class="card p-5">
+    <div class="text-slate-400 text-xs mb-1 uppercase tracking-wider"><i class="fa-solid fa-leaf text-green-400 mr-1"></i>Carbon Saved</div>
+    <div class="kpi-val text-green-400" id="kpi-carbon">--</div>
+    <div class="text-slate-500 text-xs mt-1">% reduction vs baseline</div>
+  </div>
+  <div class="card p-5">
+    <div class="text-slate-400 text-xs mb-1 uppercase tracking-wider"><i class="fa-solid fa-bolt text-yellow-400 mr-1"></i>Latency Saved</div>
+    <div class="kpi-val text-yellow-400" id="kpi-latency">--</div>
+    <div class="text-slate-500 text-xs mt-1">% faster than baseline</div>
+  </div>
+  <div class="card p-5">
+    <div class="text-slate-400 text-xs mb-1 uppercase tracking-wider"><i class="fa-solid fa-dollar-sign text-sky-400 mr-1"></i>Cost Saved</div>
+    <div class="kpi-val text-sky-400" id="kpi-cost">--</div>
+    <div class="text-slate-500 text-xs mt-1">% cheaper than baseline</div>
+  </div>
+  <div class="card p-5">
+    <div class="text-slate-400 text-xs mb-1 uppercase tracking-wider"><i class="fa-solid fa-star text-purple-400 mr-1"></i>Optimized Plan</div>
+    <div class="text-purple-300 font-bold text-lg mt-2" id="kpi-plan">--</div>
+    <div class="text-slate-500 text-xs mt-1" id="kpi-wf">workflow: demo</div>
+  </div>
+</div>
+
+<!-- Main Grid -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+
+  <!-- Controls -->
+  <div class="card p-6 lg:col-span-1">
+    <h2 class="text-white font-semibold mb-5 flex items-center gap-2"><i class="fa-solid fa-sliders text-sky-400"></i> What-If Controls</h2>
+
+    <div class="space-y-5">
+      <div class="slider-wrap">
+        <label><span>Carbon Weight</span><span id="lbl-cw">0.5</span></label>
+        <input type="range" id="sl-cw" min="0" max="1" step="0.05" value="0.5" oninput="document.getElementById('lbl-cw').textContent=this.value"/>
+      </div>
+      <div class="slider-wrap">
+        <label><span>Latency Weight</span><span id="lbl-lw">0.3</span></label>
+        <input type="range" id="sl-lw" min="0" max="1" step="0.05" value="0.3" oninput="document.getElementById('lbl-lw').textContent=this.value"/>
+      </div>
+      <div class="slider-wrap">
+        <label><span>Cost Weight</span><span id="lbl-cow">0.2</span></label>
+        <input type="range" id="sl-cow" min="0" max="1" step="0.05" value="0.2" oninput="document.getElementById('lbl-cow').textContent=this.value"/>
+      </div>
+      <div class="slider-wrap">
+        <label><span>Quality Threshold</span><span id="lbl-qt">0.8</span></label>
+        <input type="range" id="sl-qt" min="0" max="1" step="0.05" value="0.8" oninput="document.getElementById('lbl-qt').textContent=this.value"/>
+      </div>
+      <div class="slider-wrap">
+        <label><span>Carbon Budget (kg)</span><span id="lbl-cb">5.0</span></label>
+        <input type="range" id="sl-cb" min="0.5" max="20" step="0.5" value="5.0" oninput="document.getElementById('lbl-cb').textContent=this.value"/>
+      </div>
+      <div class="slider-wrap">
+        <label><span>Deadline (s)</span><span id="lbl-dl">300</span></label>
+        <input type="range" id="sl-dl" min="30" max="1800" step="30" value="300" oninput="document.getElementById('lbl-dl').textContent=this.value"/>
+      </div>
+    </div>
+
+    <div class="flex gap-3 mt-6">
+      <button class="btn-primary flex-1 flex items-center justify-center gap-2" id="btn-opt" onclick="runOptimize()">
+        <i class="fa-solid fa-wand-magic-sparkles"></i> Optimize
+      </button>
+      <button class="btn-secondary flex items-center justify-center gap-2" id="btn-exec" onclick="runExecute()" disabled>
+        <i class="fa-solid fa-play"></i> Simulate
+      </button>
+    </div>
+    <p class="text-slate-500 text-xs mt-3" id="status-msg">Click Optimize to run the whole-workflow optimizer.</p>
+  </div>
+
+  <!-- DAG Nodes -->
+  <div class="card p-6 lg:col-span-2">
+    <h2 class="text-white font-semibold mb-5 flex items-center gap-2"><i class="fa-solid fa-diagram-project text-indigo-400"></i> Optimized DAG Plan</h2>
+    <div id="dag-grid" class="grid grid-cols-2 gap-3">
+      <div class="node-chip col-span-2 text-slate-500 text-center py-6">Run optimizer to see node assignments.</div>
+    </div>
+  </div>
+</div>
+
+<!-- Donut Challenge (Intermittent Connectivity) Section -->
+<div class="card p-6 mb-6 border-amber-500/40 bg-slate-900/90 shadow-xl">
+  <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <div class="flex items-center gap-3">
+      <span class="text-3xl">🍩</span>
+      <div>
+        <h2 class="text-white font-bold text-lg flex items-center gap-2">
+          Donut Challenge: Intermittent Connectivity Engine
+          <span class="text-[10px] uppercase font-bold tracking-widest bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded">Active</span>
+        </h2>
+        <p class="text-slate-400 text-xs">Offline-first queue with IndexedDB &bull; Service Worker Background Sync &bull; Idempotency &bull; Edge Degradation</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="text-xs text-slate-400">IndexedDB Outbox:</span>
+      <span id="offline-queue-count" class="px-2.5 py-0.5 text-xs font-bold rounded-full bg-slate-800 text-slate-300">0</span>
+      <button onclick="handleManualSyncClick()" class="bg-amber-600 hover:bg-amber-500 text-white text-xs px-3.5 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition">
+        <i class="fa-solid fa-arrows-rotate"></i> Trigger Sync (/sync)
+      </button>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+    <div>
+      <label class="block text-xs text-slate-400 mb-1">Idempotency Key (Workflow ID)</label>
+      <input type="text" id="input-workflow-id" placeholder="wf_donut_001" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:border-sky-400 outline-none font-mono" />
+    </div>
+    <div>
+      <label class="block text-xs text-slate-400 mb-1">Carbon Budget Constraint (kg CO2e)</label>
+      <input type="number" id="input-carbon-budget" value="0.03" step="0.005" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:border-sky-400 outline-none font-mono" />
+    </div>
+    <div class="flex items-end gap-2">
+      <button onclick="handleQueueWorkflowClick()" class="btn-primary flex-1 text-xs py-2 flex items-center justify-center gap-1.5">
+        <i class="fa-solid fa-cloud-arrow-up"></i> Submit via Queue
+      </button>
+      <button onclick="handleTestDuplicateClick()" class="btn-secondary text-xs py-2 px-3 flex items-center justify-center gap-1.5" title="Re-submit identical workflow_id to test idempotency">
+        <i class="fa-solid fa-clone"></i> Test Idempotency
+      </button>
+      <button onclick="handleInspectQueueClick()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1.5" title="Query queue status">
+        <i class="fa-solid fa-magnifying-glass"></i> Check Status
+      </button>
+    </div>
+  </div>
+
+  <!-- Donut Activity & Status Log -->
+  <div class="bg-slate-950 border border-slate-800/80 rounded-lg p-3">
+    <div class="flex items-center justify-between text-xs text-slate-400 mb-2 border-b border-slate-800/80 pb-1.5">
+      <span><i class="fa-solid fa-clock-rotate-left text-amber-400 mr-1.5"></i> Donut Sync Event Stream</span>
+      <span id="donut-last-id" class="text-sky-400 font-mono text-[11px]">Ready</span>
+    </div>
+    <div id="donut-log" class="text-xs font-mono max-h-32 overflow-y-auto space-y-1 text-slate-300">
+      <div class="text-slate-500">System online. Try clicking "Simulate Offline", then submit a workflow to see IndexedDB offline queueing, then toggle back to online to see automatic sync!</div>
+    </div>
+  </div>
+</div>
+
+<!-- Bottom Row: Reasoning + Execution Log -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  <div class="card p-6">
+    <h2 class="text-white font-semibold mb-4 flex items-center gap-2"><i class="fa-solid fa-brain text-indigo-300"></i> Reasoning Log</h2>
+    <div class="log-box" id="reasoning-log">Waiting for optimization results...</div>
+  </div>
+  <div class="card p-6">
+    <h2 class="text-white font-semibold mb-4 flex items-center gap-2"><i class="fa-solid fa-terminal text-green-300"></i> Execution Simulation Log</h2>
+    <div class="log-box" id="exec-log">Click Simulate after optimizing to see execution output...</div>
+  </div>
+</div>
+
+<footer class="text-center text-slate-600 text-xs mt-10">CarbonPilot &mdash; Developer 1 (Engine) + Developer 2 (API) | Hackdays Project</footer>
+
+<script>
+const BASE = window.location.origin;
+let currentPlanId = null;
+
+async function checkHealth() {
+  try {
+    const r = await fetch(BASE + '/health');
+    const data = await r.json();
+    if (data.status === 'ok') {
+      document.getElementById('health-dot').className = 'w-2 h-2 rounded-full bg-green-400 inline-block';
+      document.getElementById('health-text').textContent = 'API Online';
+    }
+  } catch(e) {
+    document.getElementById('health-dot').className = 'w-2 h-2 rounded-full bg-red-500 inline-block';
+    document.getElementById('health-text').textContent = 'API Offline';
+  }
+}
+
+function setStatus(msg, loading=false) {
+  const el = document.getElementById('status-msg');
+  el.innerHTML = loading ? `<span class="spinner"></span> ${msg}` : msg;
+}
+
+function renderDag(nodes) {
+  const grid = document.getElementById('dag-grid');
+  if (!nodes || nodes.length === 0) { grid.innerHTML = '<div class="node-chip col-span-2 text-slate-500 text-center py-6">No nodes in plan.</div>'; return; }
+  grid.innerHTML = nodes.map(n => {
+    const model = n.model_name || n.assigned_model || n.model || 'N/A';
+    const region = n.region || n.assigned_region || 'N/A';
+    const carbon = typeof n.estimated_carbon !== 'undefined' ? parseFloat(n.estimated_carbon).toFixed(3) + ' kg' : '--';
+    const latency = typeof n.estimated_latency !== 'undefined' ? parseFloat(n.estimated_latency).toFixed(1) + ' s' : '--';
+    const qScore = typeof n.quality_score !== 'undefined' ? parseFloat(n.quality_score).toFixed(2) : '--';
+    const qBadge = n.quality_pass === false ? 'red' : (qScore < 0.7 ? 'yellow' : 'green');
+    return `<div class="node-chip">
+      <div class="font-semibold text-sky-300 mb-1">${n.node_id || n.id || 'Node'}</div>
+      <div class="text-slate-400 text-xs mb-2">${n.task_type || ''}</div>
+      <div class="flex flex-wrap gap-1 mb-2">
+        <span class="badge bg-indigo-900 text-indigo-300">${model}</span>
+        <span class="badge bg-slate-700 text-slate-300">${region}</span>
+      </div>
+      <div class="flex gap-3 text-xs text-slate-400">
+        <span><i class="fa-solid fa-leaf text-green-400"></i> ${carbon}</span>
+        <span><i class="fa-solid fa-clock text-yellow-400"></i> ${latency}</span>
+        <span class="badge ${qBadge}">Q: ${qScore}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderReasoning(items) {
+  const box = document.getElementById('reasoning-log');
+  if (!items || items.length === 0) { box.innerHTML = 'No reasoning data.'; return; }
+  box.innerHTML = items.map((r,i) => `<div class="mb-1"><span class="text-indigo-400">[${i+1}]</span> ${r}</div>`).join('');
+  box.scrollTop = box.scrollHeight;
+}
+
+async function runOptimize() {
+  const btn = document.getElementById('btn-opt');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Running...';
+  setStatus('Sending optimization request...', true);
+
+  const payload = {
+    workflow_id: 'demo',
+    carbon_weight: parseFloat(document.getElementById('sl-cw').value),
+    latency_weight: parseFloat(document.getElementById('sl-lw').value),
+    cost_weight: parseFloat(document.getElementById('sl-cow').value),
+    quality_requirement: parseFloat(document.getElementById('sl-qt').value),
+    carbon_budget: parseFloat(document.getElementById('sl-cb').value),
+    deadline_seconds: parseInt(document.getElementById('sl-dl').value)
+  };
+
+  try {
+    const r = await fetch(BASE + '/api/optimize', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    const data = await r.json();
+    currentPlanId = data.plan_id;
+
+    // KPIs
+    const s = data.savings || {};
+    document.getElementById('kpi-carbon').textContent = (s.carbon_percent ?? '--') + (s.carbon_percent != null ? '%' : '');
+    document.getElementById('kpi-latency').textContent = (s.latency_percent ?? '--') + (s.latency_percent != null ? '%' : '');
+    document.getElementById('kpi-cost').textContent = (s.cost_percent ?? '--') + (s.cost_percent != null ? '%' : '');
+    document.getElementById('kpi-plan').textContent = data.optimized?.name || data.optimized?.plan_name || 'Optimized';
+    document.getElementById('kpi-wf').textContent = 'workflow: ' + (data.workflow_id || 'demo');
+
+    // DAG
+    const nodes = data.optimized?.nodes || data.optimized?.node_assignments || [];
+    renderDag(nodes);
+    renderReasoning(data.reasoning);
+
+    document.getElementById('btn-exec').disabled = false;
+    setStatus(`Plan ready: ${currentPlanId}`);
+  } catch(e) {
+    setStatus('Error: ' + e.message);
+    document.getElementById('reasoning-log').innerHTML = '<span class="text-red-400">Error: ' + e.message + '</span>';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Optimize';
+  }
+}
+
+async function runExecute() {
+  if (!currentPlanId) return;
+  const btn = document.getElementById('btn-exec');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+  setStatus('Simulating execution...', true);
+  const box = document.getElementById('exec-log');
+  box.innerHTML = 'Starting simulation...\n';
+
+  try {
+    const r = await fetch(BASE + `/api/execute/${currentPlanId}`, { method: 'POST' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    const data = await r.json();
+    const results = data.results || data.node_results || [];
+    box.innerHTML = '';
+    results.forEach(n => {
+      const status = n.quality_pass !== false ? '&#10003;' : '&#10005;';
+      const col = n.quality_pass !== false ? 'text-green-400' : 'text-red-400';
+      box.innerHTML += `<div class="${col}">${status} [${n.node_id||n.id}] model=${n.model_used||n.model||'?'} region=${n.region||'?'} carbon=${(n.carbon_kg||0).toFixed(3)}kg latency=${(n.latency_s||0).toFixed(1)}s quality=${(n.quality_score||0).toFixed(2)} escalated=${n.escalated||false}</div>`;
+    });
+    if (data.total_carbon != null) box.innerHTML += `<div class="text-sky-300 mt-2">Total Carbon: ${data.total_carbon.toFixed(3)} kg | Total Cost: \$${(data.total_cost||0).toFixed(4)}</div>`;
+    if (data.quality_summary) box.innerHTML += `<div class="text-purple-300">Quality Summary: ${JSON.stringify(data.quality_summary)}</div>`;
+    box.scrollTop = box.scrollHeight;
+    setStatus('Simulation complete.');
+  } catch(e) {
+    box.innerHTML = '<span class="text-red-400">Error: ' + e.message + '</span>';
+    setStatus('Simulation error.');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-play"></i> Simulate';
+  }
+}
+
+// Donut Challenge UI Logic
+function donutLog(msg, type='info') {
+  const box = document.getElementById('donut-log');
+  if (!box) return;
+  const time = new Date().toLocaleTimeString();
+  const colors = {
+    info: 'text-sky-300',
+    success: 'text-green-400',
+    warn: 'text-amber-300',
+    error: 'text-red-400',
+  };
+  const color = colors[type] || 'text-slate-300';
+  const row = document.createElement('div');
+  row.className = color;
+  row.innerHTML = `<span class="text-slate-500">[${time}]</span> ${msg}`;
+  box.appendChild(row);
+  box.scrollTop = box.scrollHeight;
+}
+
+function toggleSimulatedNetwork() {
+  const current = !simulatedOffline;
+  setSimulatedOffline(current);
+  const btn = document.getElementById('toggle-network-btn');
+  const label = document.getElementById('toggle-network-label');
+  if (current) {
+    label.textContent = 'Reconnect Online';
+    btn.className = 'bg-red-900/80 hover:bg-red-800 text-xs px-3 py-1.5 rounded-lg border border-red-600 transition flex items-center gap-1.5 text-red-200';
+    donutLog('🔴 Network simulated as OFFLINE. Submissions will buffer in IndexedDB outbox.', 'warn');
+  } else {
+    label.textContent = 'Simulate Offline';
+    btn.className = 'bg-slate-800 hover:bg-slate-700 text-xs px-3 py-1.5 rounded-lg border border-slate-600 transition flex items-center gap-1.5 text-slate-300';
+    donutLog('🟢 Network simulated as ONLINE. Auto-syncing pending requests...', 'success');
+  }
+}
+
+async function handleQueueWorkflowClick() {
+  const idInput = document.getElementById('input-workflow-id');
+  const cbInput = document.getElementById('input-carbon-budget');
+  let wfId = idInput.value.trim();
+  if (!wfId) {
+    wfId = `wf_donut_${Date.now().toString().slice(-4)}`;
+    idInput.value = wfId;
+  }
+  const cb = parseFloat(cbInput.value) || 0.03;
+  document.getElementById('donut-last-id').textContent = wfId;
+
+  const payload = {
+    workflow_id: wfId,
+    constraints: { carbon_budget: cb, quality_target: 0.95, deadline: 60 },
+    nodes: [
+      { id: 'extract', name: 'Data Extraction', required_quality: 0.90 },
+      { id: 'analyze', name: 'Pattern Analysis', required_quality: 0.95 },
+      { id: 'synthesize', name: 'Executive Summary', required_quality: 0.95 }
+    ]
+  };
+
+  donutLog(`Submitting workflow ${wfId} (Network: ${isOnline() ? 'ONLINE' : 'OFFLINE'})...`);
+  const res = await submitWorkflow(payload);
+
+  if (res.status === 'queued_offline') {
+    donutLog(`📥 Workflow queued in IndexedDB outbox [${wfId}] (Offline storage).`, 'warn');
+  } else if (res.status === 'queued') {
+    donutLog(`🚀 Workflow successfully queued in backend queue [${wfId}] (Processing in background).`, 'success');
+  } else if (res.status === 'duplicate') {
+    donutLog(`⚠️ Idempotency check: duplicate workflow_id detected [${wfId}]. Rejected duplicate.`, 'warn');
+  } else {
+    donutLog(`Response: ${JSON.stringify(res)}`, 'info');
+  }
+}
+
+async function handleTestDuplicateClick() {
+  const idInput = document.getElementById('input-workflow-id');
+  let wfId = idInput.value.trim();
+  if (!wfId) {
+    donutLog('Enter or submit a workflow_id first to test duplicate idempotency rejection.', 'warn');
+    return;
+  }
+  donutLog(`Testing idempotency: re-submitting duplicate key [${wfId}]...`);
+  const payload = {
+    workflow_id: wfId,
+    constraints: { carbon_budget: 0.03, quality_target: 0.95, deadline: 60 },
+    nodes: [{ id: 'step_1', name: 'Redundant Call' }]
+  };
+  const res = await submitWorkflow(payload);
+  if (res.status === 'duplicate') {
+    donutLog(`✅ IDEMPOTENCY VERIFIED: Backend successfully intercepted duplicate key [${wfId}]!`, 'success');
+  } else {
+    donutLog(`Idempotency response: ${JSON.stringify(res)}`, 'info');
+  }
+}
+
+async function handleManualSyncClick() {
+  donutLog('🔄 Initiating manual sync of IndexedDB outbox and background queue...');
+  try {
+    const res = await syncOutboxManually();
+    donutLog(`Sync complete: pushed ${res.synced ?? 0} outbox records. Backend queue processing active.`, 'success');
+  } catch (e) {
+    donutLog(`Sync error: ${e.message}`, 'error');
+  }
+}
+
+async function handleInspectQueueClick() {
+  const idInput = document.getElementById('input-workflow-id');
+  const wfId = idInput.value.trim();
+  if (!wfId) {
+    donutLog('Enter a workflow_id to inspect queue status.', 'warn');
+    return;
+  }
+  try {
+    const r = await fetch(BASE + `/workflows/${wfId}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    const data = await r.json();
+    const isDegraded = data.is_offline ? ' [OFFLINE EDGE PLAN]' : ' [ONLINE CLOUD PLAN]';
+    const qual = data.result?.metrics?.quality ? `Quality=${data.result.metrics.quality}` : '';
+    donutLog(`Status: ${data.status.toUpperCase()}${isDegraded} | Retries: ${data.retry_count} | ${qual}`, 'success');
+    if (data.result?.plan) {
+      renderDag(data.result.plan);
+    }
+  } catch(e) {
+    donutLog(`Inspection error for ${wfId}: ${e.message}`, 'error');
+  }
+}
+
+// Init
+checkHealth();
+setTimeout(runOptimize, 600);
+</script>
+<script src="/static/app.js"></script>
+</body>
+</html>
